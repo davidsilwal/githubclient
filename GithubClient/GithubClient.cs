@@ -38,7 +38,6 @@ namespace GithubClient
             _downloadPath = _githubOptions.DownloadPath is { Length: > 0 }
                 ? _githubOptions.DownloadPath
                 : Environment.ExpandEnvironmentVariables("%userprofile%/downloads/");
-
         }
 
         public async ValueTask StartAsync(CancellationToken stoppingToken)
@@ -70,8 +69,9 @@ namespace GithubClient
             using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
             using var resultStream = await response.Content.ReadAsStreamAsync();
             var pathToWrite = Path.Combine(_downloadPath, $"{reo.Name}.zip");
-            using var fileStream = File.Create(pathToWrite);
-            resultStream.CopyTo(fileStream);
+            using var fs = new FileStream(pathToWrite, FileMode.Create);
+            await resultStream.CopyToAsync(fs);
+
         }
 
         public async ValueTask DeleteRepoAsync(Repo repo)
