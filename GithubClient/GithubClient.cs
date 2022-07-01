@@ -26,6 +26,9 @@ namespace GithubClient
         private readonly HttpClient _httpClient;
         private readonly GithubOptions _githubOptions;
         readonly string _downloadPath;
+
+        readonly string _logFile;
+
         public GithubClient(
             HttpClient httpClient,
             GithubOptions githubOptions
@@ -38,6 +41,8 @@ namespace GithubClient
             _downloadPath = _githubOptions.DownloadPath is { Length: > 0 }
                 ? _githubOptions.DownloadPath
                 : Environment.ExpandEnvironmentVariables("%userprofile%/downloads/");
+
+            _logFile = Path.Combine(_downloadPath, "log.txt");
         }
 
         public async ValueTask StartAsync(CancellationToken stoppingToken)
@@ -49,35 +54,60 @@ namespace GithubClient
             {
                 Directory.CreateDirectory(_downloadPath);
             }
+            var logfileStream = new FileStream(_logFile, File.Exists(_logFile) ? FileMode.Append : FileMode.OpenOrCreate);
+            using var logWriter = new StreamWriter(logfileStream);
 
-            await foreach (var repo in JsonSerializer.DeserializeAsyncEnumerable<Repo>(content, cancellationToken: stoppingToken))
+
+            var repos = JsonSerializer.DeserializeAsyncEnumerable<Repo>(content, cancellationToken: stoppingToken);
+            var options = new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = stoppingToken };
+            await Parallel.ForEachAsync(repos, options, async (repo, ct) =>
             {
-                Console.WriteLine(repo!.FullName);
-                await DownloadRepoAsZipAsync(repo);
 
+                await logWriter.WriteLineAsync($"Processing started {repo!.FullName}");
+                Console.WriteLine($"Processing started {repo!.FullName}");
+
+                await DownloadRepoAsZipAsync(repo, logWriter);
                 if (_githubOptions.DeleteAfterClone)
                 {
-                    await DeleteRepoAsync(repo);
+                    await DeleteRepoAsync(repo, logWriter);
                 }
-            }
+            });
+
         }
 
-
-        public async ValueTask DownloadRepoAsZipAsync(Repo reo)
+        public async ValueTask DownloadRepoAsZipAsync(Repo repo, StreamWriter writer)
         {
-            var url = $"https://api.github.com/repos/{reo.FullName}/zipball/master";
+
+            Console.WriteLine($"Downloading started {repo!.FullName}");
+            await writer.WriteLineAsync($"Downloading started {repo!.FullName}");
+
+            var url = $"https://api.github.com/repos/{repo.FullName}/zipball/master";
             using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
             using var resultStream = await response.Content.ReadAsStreamAsync();
-            var pathToWrite = Path.Combine(_downloadPath, $"{reo.Name}.zip");
+            var pathToWrite = Path.Combine(_downloadPath, $"{repo.Name}.zip");
             using var fs = new FileStream(pathToWrite, FileMode.Create);
             await resultStream.CopyToAsync(fs);
 
+
+            Console.WriteLine($"Downloading finished {repo!.FullName}");
+            await writer.WriteLineAsync($"Downloading finished {repo!.FullName}");
+
         }
 
-        public async ValueTask DeleteRepoAsync(Repo repo)
+        public async ValueTask DeleteRepoAsync(Repo repo, StreamWriter writer)
         {
+
+            Console.WriteLine($"Deleting started {repo!.FullName}");
+            await writer.WriteLineAsync($"Deleting started {repo!.FullName}");
+
             var url = $"https://api.github.com/repos/{repo.FullName}";
             await _httpClient.DeleteAsync(url);
+
+
+            Console.WriteLine($"Deleting finished {repo!.FullName}");
+            await writer.WriteLineAsync($"Deleting finished {repo!.FullName}");
         }
+
+
     }
 }
