@@ -9,8 +9,8 @@ namespace GithubClient
 
         public string Token { get; set; } = null!;
         public string LoginName { get; set; } = null!;
-        public string DownloadPath { get; set; } = null!;
-
+        public string? DownloadPath { get; set; }
+        public bool DeleteAfterClone { get; set; }
     };
 
 
@@ -25,6 +25,7 @@ namespace GithubClient
     {
         private readonly HttpClient _httpClient;
         private readonly GithubOptions _githubOptions;
+        readonly string _downloadPath;
         public GithubClient(
             HttpClient httpClient,
             GithubOptions githubOptions
@@ -32,6 +33,12 @@ namespace GithubClient
         {
             _httpClient = httpClient;
             _githubOptions = githubOptions;
+
+
+            _downloadPath = _githubOptions.DownloadPath is { Length: > 0 }
+                ? _githubOptions.DownloadPath
+                : Environment.ExpandEnvironmentVariables("%userprofile%/downloads/");
+
         }
 
         public async ValueTask StartAsync(CancellationToken stoppingToken)
@@ -39,17 +46,20 @@ namespace GithubClient
             var response = await _httpClient.GetAsync($"/users/{_githubOptions.LoginName}/repos", stoppingToken);
             var content = await response.Content.ReadAsStreamAsync(stoppingToken);
 
-
-            if (!Directory.Exists(_githubOptions.DownloadPath))
+            if (!Directory.Exists(_downloadPath))
             {
-                Directory.CreateDirectory(_githubOptions.DownloadPath);
+                Directory.CreateDirectory(_downloadPath);
             }
 
             await foreach (var repo in JsonSerializer.DeserializeAsyncEnumerable<Repo>(content, cancellationToken: stoppingToken))
             {
-                Console.WriteLine(repo.FullName);
+                Console.WriteLine(repo!.FullName);
                 await DownloadRepoAsZipAsync(repo);
-                await DeleteRepoAsync(repo);
+
+                if (_githubOptions.DeleteAfterClone)
+                {
+                    await DeleteRepoAsync(repo);
+                }
             }
         }
 
@@ -59,7 +69,7 @@ namespace GithubClient
             var url = $"https://api.github.com/repos/{reo.FullName}/zipball/master";
             using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
             using var resultStream = await response.Content.ReadAsStreamAsync();
-            var pathToWrite = Path.Combine(_githubOptions.DownloadPath, $"{reo.Name}.zip");
+            var pathToWrite = Path.Combine(_downloadPath, $"{reo.Name}.zip");
             using var fileStream = File.Create(pathToWrite);
             resultStream.CopyTo(fileStream);
         }
