@@ -1,6 +1,7 @@
 ﻿
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Channels;
 
 namespace GithubClient
 {
@@ -26,6 +27,8 @@ namespace GithubClient
         private readonly HttpClient _httpClient;
         private readonly GithubOptions _githubOptions;
         readonly string _downloadPath;
+        readonly Channel<Repo> _channel;
+
         public GithubClient(
             HttpClient httpClient,
             GithubOptions githubOptions
@@ -38,6 +41,8 @@ namespace GithubClient
             _downloadPath = _githubOptions.DownloadPath is { Length: > 0 }
                 ? _githubOptions.DownloadPath
                 : Environment.ExpandEnvironmentVariables("%userprofile%/downloads/");
+
+            _channel = Channel.CreateUnbounded<Repo>();
         }
 
         public async ValueTask StartAsync(CancellationToken stoppingToken)
@@ -50,16 +55,46 @@ namespace GithubClient
                 Directory.CreateDirectory(_downloadPath);
             }
 
-            await foreach (var repo in JsonSerializer.DeserializeAsyncEnumerable<Repo>(content, cancellationToken: stoppingToken))
+
+            _ = Task.Factory.StartNew(async () =>
+            {
+                await ReadReposAsync(content, stoppingToken);
+            });
+
+            _ = Task.Run(async () => await ProcessAsync(), stoppingToken);
+
+        }
+
+        async ValueTask ReadReposAsync(Stream stream, CancellationToken stoppingToken)
+        {
+            await foreach (var repo in JsonSerializer.DeserializeAsyncEnumerable<Repo>(stream, cancellationToken: stoppingToken))
             {
                 Console.WriteLine(repo!.FullName);
-                await DownloadRepoAsZipAsync(repo);
+                await _channel.Writer.WriteAsync(repo);
+            }
 
-                if (_githubOptions.DeleteAfterClone)
+         //   _channel.Writer.Complete();
+
+        }
+
+        async ValueTask ProcessAsync()
+        {
+
+            while (await _channel.Reader.WaitToReadAsync())
+            {
+                if (_channel.Reader.TryRead(out var repo))
                 {
-                    await DeleteRepoAsync(repo);
+
+                    await DownloadRepoAsZipAsync(repo);
+
+                    if (_githubOptions.DeleteAfterClone)
+                    {
+                        await DeleteRepoAsync(repo);
+                    }
+
                 }
             }
+
         }
 
 

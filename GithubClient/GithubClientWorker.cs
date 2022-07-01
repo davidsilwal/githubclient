@@ -1,6 +1,6 @@
 namespace GithubClient
 {
-    public class GithubClientWorker : BackgroundService
+    public class GithubClientWorker : IHostedService
     {
         private readonly ILogger<GithubClientWorker> _logger;
         private readonly GithubClient _githubClient;
@@ -12,12 +12,14 @@ namespace GithubClient
             _githubClient = githubClient;
         }
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        public async Task StartAsync(CancellationToken cancellationToken)
         {
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                await _githubClient.StartAsync(stoppingToken);
-            }
+            await _githubClient.StartAsync(cancellationToken);
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
         }
     }
 }
